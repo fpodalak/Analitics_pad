@@ -766,21 +766,10 @@ with tab_Meta:
 
         with col_text:
             st.markdown("### 🔍 Co możemy wyczytać z tego wykresu?")
-            st.markdown("""
-            **Rozrzut wyników:**
-            Niektóre metakategorie, jak np. "Strategia i Wizja" czy "Harmonia i Przywództwo", wykazują znaczną rozpiętość między respondentami – to sugeruje brak spójnego doświadczenia w organizacji.
-            
-            Inne, jak np. "Dane i Analityka", są bardziej spójne, ale niższe mediany mogą być sygnałem do poprawy.
-
-            **Pozycja średniej (środkowa kropka):**
-            Pokazuje ogólny poziom dojrzałości w danym obszarze. Niskie średnie przy dużej zmienności wskazują na brak jednolitych standardów.
-
-            **Długość świecy (czarna linia):**
-            Długie świece = organizacja działa nierównomiernie w danym obszarze. Jedne zespoły mają dobre praktyki, inne niemal ich nie mają. To sygnał do integracji i standaryzacji.
-            """)
 
         with col_chart:
             st.plotly_chart(fig_meta, use_container_width=True)
             display_cols = ['Kategoria', 'Wartość minimalna', 'Q1', 'Mediana', 'Średnia', 'Q3', 'Wartość maksymalna']
             df_stats_display = df_stats[display_cols].set_index('Kategoria').round(2)
             st.dataframe(df_stats_display, use_container_width=True)
+
