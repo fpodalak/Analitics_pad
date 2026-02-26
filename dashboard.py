@@ -1,12 +1,14 @@
 from pathlib import Path
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import re
+
 
 st.set_page_config(page_title="Dashboard", layout="wide")
+
 
 # --- DATA LOADER ---
 @st.cache_data
@@ -34,7 +36,6 @@ def load_survey_data(survey_name):
     
     return combined_df
 
-# --- NATIVE TABS NAVIGATION ---
 tab_HSC, tab_DMS, tab_OHIx, tab_Meta = st.tabs(["HSC", "DMS", "OHIx", "MetaCategories"])
 
 # ==========================================
@@ -47,19 +48,10 @@ with tab_HSC:
     if df_hsc.empty:
         st.warning("No HSC data available.")
     else:
-        with st.expander("Sample HSC Data"):
-            st.dataframe(df_hsc)
 
         # --- 0. TRZY PYTANIA Z NAJNIŻSZĄ ŚREDNIĄ ---
         question_cols = [col for col in df_hsc.columns if '-' in col]
         lowest_3 = df_hsc[question_cols].mean().nsmallest(3)
-
-        text_path = Path("analysis") / "file.txt"
-        if text_path.exists():
-            with open(text_path, "r", encoding="utf-8") as f:
-                descriptions = [line.strip() for line in f.read().split('\n') if line.strip()]
-        else:
-            descriptions = []
 
         question_dict = {
             's1-1': 'Nasza firma jasno określa, w czym jest lepsza od konkurencji.',
@@ -88,13 +80,9 @@ with tab_HSC:
         st.write("") 
 
         for i, (col_name, avg_score) in enumerate(lowest_3.items()):
-            desc = descriptions[i] if i < len(descriptions) else "Brak analizy w pliku file.txt."
             question = question_dict.get(col_name, col_name)
             st.markdown(f"**„{question}”**")
-            st.markdown(f"👉 Średnia: {avg_score:.2f}")
-            message = st.text_input("Analiza: ", key=f"analysis_{col_name}")
-            st.markdown(f"⛳ {desc}")
-            st.write("") 
+            opis = st.text_area(f"👉 Średnia: {avg_score:.2f}", key=f"desc_hsc_{col_name}")
         
         st.divider() 
 
@@ -229,19 +217,9 @@ with tab_DMS:
     if df_dms.empty:
         st.warning("No DMS data available.")
     else:
-        with st.expander("DMS Data"):
-            st.dataframe(df_dms)
-
         # --- 0. TRZY PYTANIA Z NAJNIŻSZĄ ŚREDNIĄ ---
         question_cols = [col for col in df_dms.columns if '-' in col]
         lowest_3 = df_dms[question_cols].mean().nsmallest(3)
-
-        text_path = Path("analysis") / "file.txt"
-        if text_path.exists():
-            with open(text_path, "r", encoding="utf-8") as f:
-                descriptions = [line.strip() for line in f.read().split('\n') if line.strip()]
-        else:
-            descriptions = []
 
         question_dict = {
             's1-1': 'Organizacja posiada jasno określoną strategię cyfrową zgodną z jej długoterminowymi celami biznesowymi.',
@@ -275,14 +253,135 @@ with tab_DMS:
         st.write("") 
 
         for i, (col_name, avg_score) in enumerate(lowest_3.items()):
-            desc = descriptions[i] if i < len(descriptions) else "Brak analizy w pliku file.txt."
             question = question_dict.get(col_name, col_name)
             st.markdown(f"**„{question}”**")
-            st.markdown(f"👉 Średnia: {avg_score:.2f}")
-            st.markdown(f"⛳ {desc}")
-            st.write("") 
-        
+            opis = st.text_area(f"👉 Średnia: {avg_score:.2f}", key=f"desc_dms_{col_name}")
+
         st.divider() 
+
+        # --- 1. RADAR I BOXPLOT ---
+        categories = {
+            's1': 'Infrastruktura Cyfrowa',
+            's2': 'Kultura Organizacyjna i Kompetencje Cyfrowe',
+            's3': 'Przewaga Technologiczna i Innowacyjność',
+            's4': 'Strategia Cyfrowa i Wizja',
+            's5': 'Zarządzanie Danymi'
+        }
+
+        for prefix, cat_name in categories.items():
+            cols = [col for col in df_dms.columns if col.startswith(prefix)]
+            if cols:
+                df_dms[cat_name] = df_dms[cols].mean(axis=1)
+        
+        cat_cols = list(categories.values())
+        print(df_dms.columns)
+        means = df_dms[cat_cols].mean().tolist()
+        mins = df_dms[cat_cols].min().tolist()
+        maxs = df_dms[cat_cols].max().tolist()
+
+        radar_cats = cat_cols + [cat_cols[0]]
+        radar_means = means + [means[0]]
+        radar_mins = mins + [mins[0]]
+        radar_maxs = maxs + [maxs[0]]
+
+        fig_radar = go.Figure()
+
+        fig_radar.add_trace(go.Scatterpolar(
+            r=radar_maxs, theta=radar_cats, mode='lines',
+            line=dict(color='#ff4b4b', dash='dash', width=1.5), name='Maksymalna'
+        ))
+        fig_radar.add_trace(go.Scatterpolar(
+            r=radar_mins, theta=radar_cats, mode='lines',
+            line=dict(color='#ff7f0e', dash='dash', width=1.5), name='Minimalna'
+        ))
+        fig_radar.add_trace(go.Scatterpolar(
+            r=radar_means, theta=radar_cats, fill='toself',
+            fillcolor='rgba(245, 166, 35, 0.4)', 
+            line=dict(color='#f5a623', width=2), name='Średnia'
+        ))
+
+        fig_radar.update_layout(
+            polar=dict(radialaxis=dict(visible=True, range=[0, 10])),
+            showlegend=True,
+            legend=dict(yanchor="bottom", y=-0.3, xanchor="left", x=0),
+            margin=dict(l=40, r=40, t=20, b=20)
+        )
+
+        df_melted = df_dms.melt(value_vars=cat_cols, var_name='Kategoria', value_name='Ocena')
+
+        fig_box = px.box(
+            df_melted, x='Kategoria', y='Ocena', color='Kategoria',
+            color_discrete_sequence=['#E39B20', '#D46A40', '#D8445F', '#DE68B5', '#4B8BBE'] 
+        )
+
+        fig_box.update_layout(
+            showlegend=False, 
+            xaxis_title=None, 
+            yaxis=dict(range=[0, 10.5]),
+            margin=dict(l=20, r=20, t=20, b=20)
+        )
+
+        col_left, col_right = st.columns(2)
+
+        with col_left:
+            st.plotly_chart(fig_radar, use_container_width=True)
+
+        with col_right:
+            st.plotly_chart(fig_box, use_container_width=True)
+
+        # --- 2. NPS I ANALIZA ---
+        def calc_nps(series):
+            promoters = (series >= 9).sum()
+            detractors = (series <= 6).sum()
+            total = len(series)
+            if total == 0: return 0
+            return ((promoters - detractors) / total) * 100
+
+        nps_data = {cat: calc_nps(df_dms[cat]) for cat in cat_cols}
+        
+        df_nps = pd.DataFrame(list(nps_data.items()), columns=['Kategoria', 'NPS']).sort_values('NPS')
+
+        color_map = {
+            'Infrastruktura Cyfrowa': '#E39B20', 
+            'Kultura Organizacyjna i Kompetencje Cyfrowe': '#D46A40', 
+            'Przewaga Technologiczna i Innowacyjność': '#D8445F', 
+            'Strategia Cyfrowa i Wizja': '#DE68B5',
+            'Zarządzanie Danymi': '#4B8BBE'
+        }
+        df_nps['Color'] = df_nps['Kategoria'].map(color_map)
+
+        fig_nps = go.Figure(go.Bar(
+            x=df_nps['Kategoria'],
+            y=df_nps['NPS'],
+            marker_color=df_nps['Color'],
+            text=[f"{val:.1f}%" for val in df_nps['NPS']],
+            textposition='outside'
+        ))
+
+        fig_nps.update_layout(
+            title=dict(text="NPS dla każdej kategorii DMS", x=0.5),
+            yaxis=dict(range=[-100, 100], title="NPS (%)", zeroline=True, zerolinecolor='black'),
+            xaxis=dict(title="Kategoria"),
+            showlegend=False,
+            margin=dict(l=40, r=40, t=40, b=40)
+        )
+
+        analysis_path = Path("analysis") / "dms.txt"
+        if analysis_path.exists():
+            with open(analysis_path, "r", encoding="utf-8") as f:
+                analysis_text = f.read()
+        else:
+            analysis_text = "**Brak pliku:** Utwórz plik `analysis/dms.txt`, aby wyświetlić tutaj wnioski."
+
+        st.write("---")
+        
+        col_nps_left, col_text_right = st.columns([1.5, 1.0])
+
+        with col_nps_left:
+            st.plotly_chart(fig_nps, use_container_width=True)
+
+        with col_text_right:
+            st.markdown(analysis_text)
 
 
 # ==========================================
@@ -294,19 +393,9 @@ with tab_OHIx:
     if df_ohix.empty:
         st.warning("No OHIx data available.")
     else:
-        with st.expander("OHIx Data"):
-            st.dataframe(df_ohix)
-
         # --- 0. TRZY PYTANIA Z NAJNIŻSZĄ ŚREDNIĄ ---
         question_cols = [col for col in df_ohix.columns if '-' in col]
         lowest_3 = df_ohix[question_cols].mean().nsmallest(3)
-
-        text_path = Path("analysis") / "file.txt"
-        if text_path.exists():
-            with open(text_path, "r", encoding="utf-8") as f:
-                descriptions = [line.strip() for line in f.read().split('\n') if line.strip()]
-        else:
-            descriptions = []
 
         question_dict = {
             's1-1': 'Organizacja ma jasną i inspirującą wizję, która wyznacza kierunek strategiczny.',
@@ -340,32 +429,253 @@ with tab_OHIx:
         st.write("") 
 
         for i, (col_name, avg_score) in enumerate(lowest_3.items()):
-            desc = descriptions[i] if i < len(descriptions) else "Brak analizy w pliku file.txt."
             question = question_dict.get(col_name, col_name)
             st.markdown(f"**„{question}”**")
-            st.markdown(f"👉 Średnia: {avg_score:.2f}")
-            st.markdown(f"⛳ {desc}")
-            st.write("") 
-        
+            st.text_area(f"👉 Średnia: {avg_score:.2f}", key=f"desc_ohix_{col_name}")
+
         st.divider() 
+
+        # --- 1. RADAR I BOXPLOT ---
+        categories = {
+            's1': 'Dobrostan i Rozwój Pracowników',
+            's2': 'Kultura i Wartości',
+            's3': 'Przywództwo i Wizja',
+            's4': 'Strategia i Koordynacja',
+            's5': 'Zaangażowanie i Współpraca w Zespole'
+        }
+
+        for prefix, cat_name in categories.items():
+            cols = [col for col in df_ohix.columns if col.startswith(prefix)]
+            if cols:
+                df_ohix[cat_name] = df_ohix[cols].mean(axis=1)
+        
+        cat_cols = list(categories.values())
+
+        means = df_ohix[cat_cols].mean().tolist()
+        mins = df_ohix[cat_cols].min().tolist()
+        maxs = df_ohix[cat_cols].max().tolist()
+
+        radar_cats = cat_cols + [cat_cols[0]]
+        radar_means = means + [means[0]]
+        radar_mins = mins + [mins[0]]
+        radar_maxs = maxs + [maxs[0]]
+
+        fig_radar = go.Figure()
+
+        fig_radar.add_trace(go.Scatterpolar(
+            r=radar_maxs, theta=radar_cats, mode='lines',
+            line=dict(color='#ff4b4b', dash='dash', width=1.5), name='Maksymalna'
+        ))
+        fig_radar.add_trace(go.Scatterpolar(
+            r=radar_mins, theta=radar_cats, mode='lines',
+            line=dict(color='#ff7f0e', dash='dash', width=1.5), name='Minimalna'
+        ))
+        fig_radar.add_trace(go.Scatterpolar(
+            r=radar_means, theta=radar_cats, fill='toself',
+            fillcolor='rgba(245, 166, 35, 0.4)', 
+            line=dict(color='#f5a623', width=2), name='Średnia'
+        ))
+
+        fig_radar.update_layout(
+            polar=dict(radialaxis=dict(visible=True, range=[0, 10])),
+            showlegend=True,
+            legend=dict(yanchor="bottom", y=-0.3, xanchor="left", x=0),
+            margin=dict(l=40, r=40, t=20, b=20)
+        )
+
+        df_melted = df_ohix.melt(value_vars=cat_cols, var_name='Kategoria', value_name='Ocena')
+
+        fig_box = px.box(
+            df_melted, x='Kategoria', y='Ocena', color='Kategoria',
+            color_discrete_sequence=['#E39B20', '#D46A40', '#D8445F', '#DE68B5', '#4B8BBE'] 
+        )
+
+        fig_box.update_layout(
+            showlegend=False, 
+            xaxis_title=None, 
+            yaxis=dict(range=[0, 10.5]),
+            margin=dict(l=20, r=20, t=20, b=20)
+        )
+
+        col_left, col_right = st.columns(2)
+
+        with col_left:
+            st.plotly_chart(fig_radar, use_container_width=True)
+
+        with col_right:
+            st.plotly_chart(fig_box, use_container_width=True)
+
+        # --- 2. NPS I ANALIZA ---
+        def calc_nps(series):
+            promoters = (series >= 9).sum()
+            detractors = (series <= 6).sum()
+            total = len(series)
+            if total == 0: return 0
+            return ((promoters - detractors) / total) * 100
+
+        nps_data = {cat: calc_nps(df_ohix[cat]) for cat in cat_cols}
+        
+        df_nps = pd.DataFrame(list(nps_data.items()), columns=['Kategoria', 'NPS']).sort_values('NPS')
+
+        color_map = {
+            'Dobrostan i Rozwój Pracowników': '#E39B20', 
+            'Kultura i Wartości': '#D46A40', 
+            'Przywództwo i Wizja': '#D8445F', 
+            'Strategia i Koordynacja': '#DE68B5',
+            'Zaangażowanie i Współpraca w Zespole': '#4B8BBE'
+        }
+        df_nps['Color'] = df_nps['Kategoria'].map(color_map)
+
+        fig_nps = go.Figure(go.Bar(
+            x=df_nps['Kategoria'],
+            y=df_nps['NPS'],
+            marker_color=df_nps['Color'],
+            text=[f"{val:.1f}%" for val in df_nps['NPS']],
+            textposition='outside'
+        ))
+
+        fig_nps.update_layout(
+            title=dict(text="NPS dla każdej kategorii DMS", x=0.5),
+            yaxis=dict(range=[-100, 100], title="NPS (%)", zeroline=True, zerolinecolor='black'),
+            xaxis=dict(title="Kategoria"),
+            showlegend=False,
+            margin=dict(l=40, r=40, t=40, b=40)
+        )
+
+        analysis_path = Path("analysis") / "dms.txt"
+        if analysis_path.exists():
+            with open(analysis_path, "r", encoding="utf-8") as f:
+                analysis_text = f.read()
+        else:
+            analysis_text = "**Brak pliku:** Utwórz plik `analysis/dms.txt`, aby wyświetlić tutaj wnioski."
+
+        st.write("---")
+        
+        col_nps_left, col_text_right = st.columns([1.5, 1.0])
+
+        with col_nps_left:
+            st.plotly_chart(fig_nps, use_container_width=True)
+
+        with col_text_right:
+            st.markdown(analysis_text)
 
 
 # ==========================================
 # MetaCategories TAB
 # ==========================================
+
+def calculate_bounds(formula):
+    """
+    Analizuje formułę i oblicza wynik dla wszystkich zmiennych = 1 (min) oraz = 10 (max).
+    Zakłada format: prefix_sX_Y * waga
+    """
+    weights = re.findall(r'\*\s*([0-9.]+)', formula)
+    weights = [float(w) for w in weights]
+    
+    theo_min = sum(weights) * 1
+    theo_max = sum(weights) * 10
+    return theo_min, theo_max
+
 with tab_Meta:
     st.title("Panel 4: Analiza Metakategorii")
     
-    # --- 1. POBIERANIE I ŁĄCZENIE DANYCH Z ANKIET ---
     df_hsc = load_survey_data("hsc")
     df_dms = load_survey_data("dms")
     df_ohix = load_survey_data("ohix")
     
     if df_hsc.empty or df_dms.empty or df_ohix.empty:
-        st.warning("Brakuje danych w jednym z folderów (hsc, dms, ohix), aby wygenerować analizę metakategorii.")
+        st.warning("Brakuje danych w jednym z folderów (hsc, dms, ohix).")
     else:
+        # Łączenie danych
         min_len = min(len(df_hsc), len(df_dms), len(df_ohix))
         df_combined = pd.DataFrame()
+        
+        for df, prefix in zip([df_hsc, df_dms, df_ohix], ["hsc", "dms", "ohix"]):
+            for col in df.columns:
+                if '-' in col:
+                    clean_col = col.replace('-', '_')
+                    df_combined[f"{prefix}_{clean_col}"] = df[col].iloc[:min_len].values
+
+        meta_formulas = {
+            'Strategia i Wizja': 'hsc_s1_1 * 0.2 + hsc_s1_2 * 0.4 + hsc_s1_3 * 0.3 + hsc_s1_4 * 0.2 + hsc_s1_5 * 0.5 + hsc_s2_1 * 0.6 + hsc_s2_2 * 0.5 + hsc_s2_3 * 0.5 + hsc_s2_4 * 0.7 + hsc_s2_5 * 0.4 + hsc_s4_1 * 0.4 + hsc_s4_3 * 0.3 + hsc_s4_4 * 0.4 + dms_s1_1 * 0.6 + dms_s1_2 * 0.6 + dms_s1_3 * 0.6 + dms_s1_4 * 0.5 + dms_s1_5 * 0.5 + dms_s2_4 * 0.3 + dms_s2_5 * 0.3 + dms_s3_1 * 0.3 + dms_s5_1 * 0.3 + ohix_s1_1 * 0.4 + ohix_s1_2 * 0.3 + ohix_s1_3 * 0.2 + ohix_s1_4 * 0.4 + ohix_s1_5 * 0.1 + ohix_s2_1 * 0.5 + ohix_s2_2 * 0.3 + ohix_s2_3 * 0.2 + ohix_s2_4 * 0.2 + ohix_s2_5 * 0.2 + ohix_s4_3 * 0.2 + ohix_s4_4 * 0.1 + ohix_s5_2 * 0.1',
+
+            'Pozycjonowanie Rynkowe': 'hsc_s1_1 * 0.8 + hsc_s1_2 * 0.6 + hsc_s1_3 * 0.7 + hsc_s1_4 * 0.5 + hsc_s1_5 * 0.5 + hsc_s2_1 * 0.4 + hsc_s3_2 * 0.3 + hsc_s3_3 * 0.2 + dms_s2_5 * 0.1 + ohix_s2_4 * 0.2',
+
+            'Portfolio (Produkty/Usługi)': 'hsc_s3_1 * 0.7 + hsc_s3_2 * 0.5 + hsc_s3_3 * 0.6 + hsc_s3_4 * 0.6 + hsc_s3_5 * 0.5 + dms_s2_2 * 0.2',
+
+            'Technologia i Innowacyjność': 'dms_s1_1 * 0.4 + dms_s1_2 * 0.4 + dms_s1_3 * 0.4 + dms_s1_4 * 0.5 + dms_s1_5 * 0.5 + dms_s2_1 * 0.6 + dms_s2_2 * 0.6 + dms_s2_3 * 0.6 + dms_s2_4 * 0.5 + dms_s2_5 * 0.4 + dms_s3_1 * 0.4 + dms_s3_3 * 0.3 + dms_s3_4 * 0.3 + dms_s4_1 * 0.3 + dms_s4_2 * 0.3 + dms_s4_3 * 0.4 + dms_s4_4 * 0.4 + dms_s4_5 * 0.5 + dms_s5_1 * 0.3 + dms_s5_2 * 0.3 + dms_s5_3 * 0.2 + dms_s5_4 * 0.3 + dms_s5_5 * 0.2',
+
+            'Dane i Analityka': 'hsc_s3_4 * 0.2 + hsc_s4_2 * 0.3 + dms_s3_1 * 0.7 + dms_s3_2 * 0.8 + dms_s3_3 * 0.7 + dms_s3_4 * 0.5 + dms_s3_5 * 0.7 + ohix_s4_4 * 0.2',
+
+            'Operacje i Procesy': 'hsc_s1_4 * 0.3 + hsc_s2_4 * 0.3 + hsc_s3_1 * 0.3 + hsc_s3_3 * 0.2 + hsc_s3_4 * 0.2 + hsc_s3_5 * 0.5 + hsc_s4_2 * 0.5 + dms_s2_1 * 0.4 + dms_s2_2 * 0.2 + dms_s3_2 * 0.2 + dms_s3_4 * 0.3 + dms_s5_1 * 0.4 + dms_s5_2 * 0.2 + ohix_s1_3 * 0.2 + ohix_s1_5 * 0.2 + ohix_s2_2 * 0.2 + ohix_s2_4 * 0.2 + ohix_s2_5 * 0.2 + ohix_s3_2 * 0.3 + ohix_s3_3 * 0.2 + ohix_s5_4 * 0.3 + ohix_s5_5 * 0.2',
+
+            'Infrastruktura i zasoby': 'dms_s2_4 * 0.2 + dms_s2_5 * 0.2 + dms_s3_5 * 0.3 + dms_s5_2 * 0.6 + dms_s5_3 * 0.8 + dms_s5_4 * 0.7 + dms_s5_5 * 0.8',
+
+            'Ludzie i Kultura Organizacyjna': 'hsc_s2_2 * 0.2 + hsc_s2_5 * 0.3 + hsc_s4_1 * 0.2 + hsc_s4_3 * 0.7 + hsc_s4_4 * 0.2 + hsc_s4_5 * 0.4 + dms_s2_3 * 0.5 + dms_s3_4 * 0.2 + dms_s4_1 * 0.7 + dms_s4_2 * 0.7 + dms_s4_3 * 0.6 + dms_s4_4 * 0.6 + dms_s4_5 * 0.5 + ohix_s1_1 * 0.3 + ohix_s1_2 * 0.3 + ohix_s1_3 * 0.3 + ohix_s1_4 * 0.2 + ohix_s2_1 * 0.2 + ohix_s2_2 * 0.2 + ohix_s3_1 * 0.5 + ohix_s3_2 * 0.3 + ohix_s3_3 * 0.3 + ohix_s3_4 * 0.4 + ohix_s3_5 * 0.5 + ohix_s4_1 * 0.7 + ohix_s4_2 * 0.6 + ohix_s4_3 * 0.5 + ohix_s4_4 * 0.4 + ohix_s4_5 * 0.5 + ohix_s5_1 * 0.6 + ohix_s5_2 * 0.5 + ohix_s5_3 * 0.7 + ohix_s5_4 * 0.5 + ohix_s5_5 * 0.4',
+
+            'Harmonia i Przywództwo': 'hsc_s2_3 * 0.5 + hsc_s3_2 * 0.2 + hsc_s4_2 * 0.2 + hsc_s4_5 * 0.6 + ohix_s1_1 * 0.3 + ohix_s1_2 * 0.4 + ohix_s1_3 * 0.4 + ohix_s1_4 * 0.4 + ohix_s1_5 * 0.3 + ohix_s2_1 * 0.3 + ohix_s2_2 * 0.5 + ohix_s2_3 * 0.4 + ohix_s2_4 * 0.4 + ohix_s2_5 * 0.4 + ohix_s3_1 * 0.5 + ohix_s3_2 * 0.4 + ohix_s3_3 * 0.5 + ohix_s3_4 * 0.3 + ohix_s3_5 * 0.5 + ohix_s4_1 * 0.3 + ohix_s4_2 * 0.2 + ohix_s4_3 * 0.3 + ohix_s4_4 * 0.3 + ohix_s4_5 * 0.5 + ohix_s5_1 * 0.4 + ohix_s5_2 * 0.4 + ohix_s5_3 * 0.3 + ohix_s5_4 * 0.5 + ohix_s5_5 * 0.4'
+        }
+
+        stats_list = []
+
+        for cat_name, formula in meta_formulas.items():
+            try:
+                real_scores = df_combined.eval(formula)
+                
+                theo_min, theo_max = calculate_bounds(formula)
+                
+                stats_list.append({
+                    'Kategoria': cat_name,
+                    'Theo Min': theo_min,
+                    'Wartość minimalna': real_scores.min(),
+                    'Q1': real_scores.quantile(0.25),
+                    'Mediana': real_scores.median(),
+                    'Średnia': real_scores.mean(),
+                    'Q3': real_scores.quantile(0.75),
+                    'Wartość maksymalna': real_scores.max(),
+                    'Theo Max': theo_max
+                })
+            except Exception as e:
+                st.error(f"Błąd we wzorze '{cat_name}': {e}")
+        
+        df_stats = pd.DataFrame(stats_list)
+
+        # --- WIZUALIZACJA ---
+        fig_meta = go.Figure()
+
+        for _, row in df_stats[::-1].iterrows():
+            fig_meta.add_trace(go.Scatter(
+                x=[row['Theo Min'], row['Theo Max']],
+                y=[row['Kategoria'], row['Kategoria']],
+                mode='lines',
+                line=dict(color='#F0F0F0', width=18),
+                hoverinfo='skip'
+            ))
+            
+            # Świeca
+            fig_meta.add_trace(go.Scatter(
+                x=[row['Wartość minimalna'], row['Wartość maksymalna']],
+                y=[row['Kategoria'], row['Kategoria']],
+                mode='lines',
+                line=dict(color='#333333', width=4),
+                name='Realny zakres'
+            ))
+            
+            # Punkt
+            fig_meta.add_trace(go.Scatter(
+                x=[row['Średnia']],
+                y=[row['Kategoria']],
+                mode='markers',
+                marker=dict(color='#1f77b4', size=10, symbol='diamond'),
+                name='Średnia'
+            ))
+
+        fig_meta.update_layout(
+            showlegend=False, height=550, plot_bgcolor='white',
+            margin=dict(l=10, r=10, t=10, b=10),
+            xaxis=dict(title="Punkty (skalowane wagami)", showgrid=True, gridcolor='#EEEEEE')
+        )
+
         
         for col in df_hsc.columns:
             if '-' in col: df_combined[f"hsc_{col.replace('-', '_')}"] = df_hsc[col].iloc[:min_len]
@@ -374,18 +684,7 @@ with tab_Meta:
         for col in df_ohix.columns:
             if '-' in col: df_combined[f"ohix_{col.replace('-', '_')}"] = df_ohix[col].iloc[:min_len]
 
-        # --- WZORY DLA METAKATEGORII ---
-        meta_formulas = {
-            'Strategia i Wizja': '0.40 * hsc_s1_1 + 0.60 * dms_s4_4',
-            'Pozycjonowanie Rynkowe': '1.0 * hsc_s2_1',
-            'Portfolio (Produkty/Usługi)': '1.0 * hsc_s3_1',
-            'Technologia i Innowacyjność': '1.0 * dms_s2_1',
-            'Dane i Analityka': '1.0 * dms_s3_1',
-            'Operacje i Procesy': '1.0 * hsc_s4_2',
-            'Infrastruktura i zasoby': '1.0 * dms_s5_1',
-            'Ludzie i Kultura Organizacyjna': '1.0 * ohix_s4_1',
-            'Harmonia i Przywództwo': '1.0 * ohix_s5_5'
-        }
+
 
         # --- 2. OBLICZANIE STATYSTYK DO TABELI I WYKRESU ---
         stats_list = []
